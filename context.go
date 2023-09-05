@@ -10,6 +10,7 @@ type Context struct {
 	Bot             *tgbotapi.BotAPI
 	Message         *tgbotapi.Message
 	IsEditedMessage bool
+	IsCallback      bool
 	Update          tgbotapi.Update
 	Data            map[string]interface{}
 	IsAborted       bool

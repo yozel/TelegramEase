@@ -2,6 +2,7 @@ package telegramease
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -15,6 +16,7 @@ type TelegramBot struct {
 	Bot              *tgbotapi.BotAPI
 	middleware       []Handler
 	commands         map[string][]Handler
+	callbacks        map[string][]Handler
 	defaultHandler   Handler
 	helpText         string
 	commandsRegister []tgbotapi.BotCommand
@@ -44,6 +46,10 @@ func (b *TelegramBot) Use(handler Handler) {
 func (b *TelegramBot) helpHandler(ctx *Context) {
 	ctx.Reply(b.helpText, "markdown")
 	ctx.Abort()
+}
+
+func (b *TelegramBot) HandleCallback(callback string, handler ...Handler) {
+	b.callbacks[callback] = handler
 }
 
 func (b *TelegramBot) HandleCommand(command string, handler ...Handler) {
@@ -78,17 +84,22 @@ func (b *TelegramBot) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case update := <-updates:
+			isCallback := false
 			isEditedMsg := false
 			msg := update.Message
-			if msg == nil {
+			if msg == nil && update.EditedMessage != nil {
 				isEditedMsg = true
 				msg = update.EditedMessage
+			} else if msg == nil && update.CallbackQuery != nil {
+				isCallback = true
+				msg = update.CallbackQuery.Message
 			}
 			b.handle(&Context{
 				Bot:             b.Bot,
 				Update:          update,
 				Message:         msg,
 				IsEditedMessage: isEditedMsg,
+				IsCallback:      isCallback,
 				Data:            make(map[string]interface{}),
 			})
 		}
@@ -103,8 +114,30 @@ func (b *TelegramBot) handle(ctx *Context) {
 			return
 		}
 	}
-	if ctx.Message.Command() != "" {
-		handlers, ok := b.commands[ctx.Message.Command()]
+	if !ctx.IsCallback {
+		if ctx.Message.Command() != "" {
+			handlers, ok := b.commands[ctx.Message.Command()]
+			if ok {
+				for _, handler := range handlers {
+					handler(ctx)
+					if ctx.IsAborted {
+						return
+					}
+				}
+				return
+			}
+		}
+		b.defaultHandler(ctx)
+	} else {
+		var v struct {
+			CallbackName string `json:"callback_name"`
+		}
+		err := json.Unmarshal([]byte(ctx.Update.CallbackQuery.Data), &v)
+		if err != nil {
+			log.Printf("failed to unmarshal callback data: %v", err)
+			return
+		}
+		handlers, ok := b.callbacks[v.CallbackName]
 		if ok {
 			for _, handler := range handlers {
 				handler(ctx)
@@ -115,5 +148,4 @@ func (b *TelegramBot) handle(ctx *Context) {
 			return
 		}
 	}
-	b.defaultHandler(ctx)
 }
