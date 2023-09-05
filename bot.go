@@ -2,7 +2,6 @@ package telegramease
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -11,15 +10,23 @@ import (
 )
 
 type Handler func(ctx *Context)
+type CmdHandler func(ctx *Context, args Args)
+type CallbackHandler func(ctx *Context, data string)
 
 type TelegramBot struct {
 	Bot              *tgbotapi.BotAPI
 	middleware       []Handler
-	commands         map[string][]Handler
-	callbacks        map[string][]Handler
-	defaultHandler   Handler
+	commands         map[string][]CmdHandler
+	callbacks        map[string][]CallbackHandler
+	defaultHandler   CmdHandler
 	helpText         string
 	commandsRegister []tgbotapi.BotCommand
+}
+
+type Args []string
+
+func (a Args) GetAll() string {
+	return strings.Join(a, " ")
 }
 
 func NewBot(token string) (*TelegramBot, error) {
@@ -31,8 +38,9 @@ func NewBot(token string) (*TelegramBot, error) {
 	b := &TelegramBot{
 		Bot:              bot,
 		middleware:       []Handler{},
-		commands:         map[string][]Handler{},
-		defaultHandler:   func(ctx *Context) {},
+		commands:         map[string][]CmdHandler{},
+		callbacks:        map[string][]CallbackHandler{},
+		defaultHandler:   func(ctx *Context, _ Args) {},
 		commandsRegister: []tgbotapi.BotCommand{},
 	}
 	b.HandleDefault(b.helpHandler)
@@ -43,16 +51,16 @@ func (b *TelegramBot) Use(handler Handler) {
 	b.middleware = append(b.middleware, handler)
 }
 
-func (b *TelegramBot) helpHandler(ctx *Context) {
+func (b *TelegramBot) helpHandler(ctx *Context, _ Args) {
 	ctx.Reply(b.helpText, "markdown")
 	ctx.Abort()
 }
 
-func (b *TelegramBot) HandleCallback(callback string, handler ...Handler) {
+func (b *TelegramBot) HandleCallback(callback string, handler ...CallbackHandler) {
 	b.callbacks[callback] = handler
 }
 
-func (b *TelegramBot) HandleCommand(command string, handler ...Handler) {
+func (b *TelegramBot) HandleCommand(command string, handler ...CmdHandler) {
 	b.commands[command] = handler
 }
 
@@ -64,7 +72,7 @@ func (b *TelegramBot) AddCommandHelper(command string, argdesc string, desc stri
 	})
 }
 
-func (b *TelegramBot) HandleDefault(handler Handler) {
+func (b *TelegramBot) HandleDefault(handler CmdHandler) {
 	b.defaultHandler = handler
 }
 
@@ -84,23 +92,10 @@ func (b *TelegramBot) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case update := <-updates:
-			isCallback := false
-			isEditedMsg := false
-			msg := update.Message
-			if msg == nil && update.EditedMessage != nil {
-				isEditedMsg = true
-				msg = update.EditedMessage
-			} else if msg == nil && update.CallbackQuery != nil {
-				isCallback = true
-				msg = update.CallbackQuery.Message
-			}
 			b.handle(&Context{
-				Bot:             b.Bot,
-				Update:          update,
-				Message:         msg,
-				IsEditedMessage: isEditedMsg,
-				IsCallback:      isCallback,
-				Data:            make(map[string]interface{}),
+				Bot:    b.Bot,
+				Update: update,
+				Data:   make(map[string]interface{}),
 			})
 		}
 	}
@@ -114,12 +109,19 @@ func (b *TelegramBot) handle(ctx *Context) {
 			return
 		}
 	}
-	if !ctx.IsCallback {
-		if ctx.Message.Command() != "" {
-			handlers, ok := b.commands[ctx.Message.Command()]
+	msg, err := ctx.GetMessage()
+	if err == nil {
+		if msg.Command() != "" {
+			args := []string{}
+			for _, arg := range strings.Split(msg.CommandArguments(), " ") {
+				if arg != "" {
+					args = append(args, arg)
+				}
+			}
+			handlers, ok := b.commands[msg.Command()]
 			if ok {
 				for _, handler := range handlers {
-					handler(ctx)
+					handler(ctx, args)
 					if ctx.IsAborted {
 						return
 					}
@@ -127,25 +129,24 @@ func (b *TelegramBot) handle(ctx *Context) {
 				return
 			}
 		}
-		b.defaultHandler(ctx)
-	} else {
-		var v struct {
-			CallbackName string `json:"callback_name"`
-		}
-		err := json.Unmarshal([]byte(ctx.Update.CallbackQuery.Data), &v)
-		if err != nil {
-			log.Printf("failed to unmarshal callback data: %v", err)
+		b.defaultHandler(ctx, []string{})
+	} else if ctx.Update.CallbackQuery != nil {
+		args := strings.SplitN(ctx.Update.CallbackQuery.Data, ":", 2)
+		if len(args) != 2 {
+			log.Printf("invalid callback data: %s", ctx.Update.CallbackQuery.Data)
 			return
 		}
-		handlers, ok := b.callbacks[v.CallbackName]
+		handlers, ok := b.callbacks[args[0]]
 		if ok {
 			for _, handler := range handlers {
-				handler(ctx)
+				handler(ctx, args[1])
 				if ctx.IsAborted {
 					return
 				}
 			}
 			return
 		}
+	} else {
+		log.Printf("unsupported update type: %+v", ctx.Update)
 	}
 }

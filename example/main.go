@@ -12,11 +12,11 @@ import (
 
 // Global middleware
 func authenticate(c *telegramease.Context) {
-	c.Data["isAdmin"] = c.Message.From.UserName == "yozel"
+	c.Data["isAdmin"] = c.Update.FromChat() != nil && c.Update.FromChat().UserName == "yozel"
 }
 
 // Command middleware
-func isAdmin(c *telegramease.Context) {
+func isAdmin(c *telegramease.Context, _ telegramease.Args) {
 	if !c.Data["isAdmin"].(bool) {
 		c.Reply("You are not an admin", "")
 		c.Abort()
@@ -24,9 +24,10 @@ func isAdmin(c *telegramease.Context) {
 }
 
 // Command handler
-func debug(c *telegramease.Context) {
+func debug(c *telegramease.Context, _ telegramease.Args) {
 	msg := ""
-	b, err := json.MarshalIndent(c.Message, "", "  ")
+	incomingMsg, _ := c.GetMessage()
+	b, err := json.MarshalIndent(incomingMsg, "", "  ")
 	if err != nil {
 		c.Reply(fmt.Errorf("error marshaling message: %w", err).Error(), "")
 		c.Abort()
@@ -37,10 +38,10 @@ func debug(c *telegramease.Context) {
 }
 
 // Command handler
-func echo(c *telegramease.Context) {
+func echo(c *telegramease.Context, args telegramease.Args) {
 	msg := ""
-	if len(c.Message.CommandArguments()) > 0 {
-		msg = c.Message.CommandArguments()
+	if len(args) > 0 {
+		msg = args.GetAll()
 	} else {
 		msg = "You didn't provide any arguments"
 	}
