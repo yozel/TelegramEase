@@ -10,7 +10,8 @@ import (
 )
 
 type Handler func(ctx *Context)
-type CmdHandler func(ctx *Context, args Args)
+type ErrorHandler func(ctx *Context, args Args, err error)
+type CmdHandler func(ctx *Context, args Args) error
 type CallbackHandler func(ctx *Context, data string)
 
 type TelegramBot struct {
@@ -19,6 +20,7 @@ type TelegramBot struct {
 	commands         map[string][]CmdHandler
 	callbacks        map[string][]CallbackHandler
 	defaultHandler   CmdHandler
+	errorHandler     ErrorHandler
 	helpText         string
 	commandsRegister []tgbotapi.BotCommand
 }
@@ -40,10 +42,10 @@ func NewBot(token string) (*TelegramBot, error) {
 		middleware:       []Handler{},
 		commands:         map[string][]CmdHandler{},
 		callbacks:        map[string][]CallbackHandler{},
-		defaultHandler:   func(ctx *Context, _ Args) {},
+		defaultHandler:   func(ctx *Context, _ Args) error { return nil },
 		commandsRegister: []tgbotapi.BotCommand{},
 	}
-	b.HandleDefault(b.helpHandler)
+	b.SetDefaultHandler(b.helpHandler)
 	return b, nil
 }
 
@@ -51,9 +53,10 @@ func (b *TelegramBot) Use(handler Handler) {
 	b.middleware = append(b.middleware, handler)
 }
 
-func (b *TelegramBot) helpHandler(ctx *Context, _ Args) {
+func (b *TelegramBot) helpHandler(ctx *Context, _ Args) error {
 	ctx.Reply(b.helpText, "markdown")
 	ctx.Abort()
+	return nil
 }
 
 func (b *TelegramBot) HandleCallback(callback string, handler ...CallbackHandler) {
@@ -72,8 +75,12 @@ func (b *TelegramBot) AddCommandHelper(command string, argdesc string, desc stri
 	})
 }
 
-func (b *TelegramBot) HandleDefault(handler CmdHandler) {
+func (b *TelegramBot) SetDefaultHandler(handler CmdHandler) {
 	b.defaultHandler = handler
+}
+
+func (b *TelegramBot) SetErrorHandler(handler ErrorHandler) {
+	b.errorHandler = handler
 }
 
 func (b *TelegramBot) Run(ctx context.Context) error {
@@ -121,7 +128,10 @@ func (b *TelegramBot) handle(ctx *Context) {
 			handlers, ok := b.commands[msg.Command()]
 			if ok {
 				for _, handler := range handlers {
-					handler(ctx, args)
+					err := handler(ctx, args)
+					if err != nil && b.errorHandler != nil {
+						b.errorHandler(ctx, args, err)
+					}
 					if ctx.IsAborted {
 						return
 					}
