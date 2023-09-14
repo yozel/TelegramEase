@@ -9,10 +9,15 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+type contextKey int
+
+const InputsContextKey = contextKey(1)
+
 type Handler func(ctx *Context)
 type ErrorHandler func(ctx *Context, args Args, err error)
 type CmdHandler func(ctx *Context, args Args) error
 type CallbackHandler func(ctx *Context, data string)
+type PanicHandler func(ctx *Context, err any)
 
 type TelegramBot struct {
 	Bot              *tgbotapi.BotAPI
@@ -99,10 +104,15 @@ func (b *TelegramBot) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case update := <-updates:
+			data := make(map[string]interface{})
 			b.handle(&Context{
+				Context: context.WithValue(ctx, InputsContextKey, map[string]interface{}{
+					"update": update,
+					"data":   data,
+				}),
 				Bot:    b.Bot,
 				Update: update,
-				Data:   make(map[string]interface{}),
+				Data:   data,
 			})
 		}
 	}

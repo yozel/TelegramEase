@@ -1,6 +1,7 @@
 package telegramease
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -8,6 +9,7 @@ import (
 )
 
 type Context struct {
+	context.Context
 	Bot       *tgbotapi.BotAPI
 	Update    tgbotapi.Update
 	Data      map[string]interface{}
