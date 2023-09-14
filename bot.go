@@ -102,6 +102,7 @@ func (b *TelegramBot) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			b.Bot.StopReceivingUpdates()
 			return ctx.Err()
 		case update := <-updates:
 			data := make(map[string]interface{})
